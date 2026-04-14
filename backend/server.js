@@ -4,6 +4,10 @@ const http = require('http');
 const { Server } = require('socket.io'); 
 const cors = require('cors');
 const connectDB = require('./config/db');
+const Message = require('./models/Message');
+const projectRoutes = require('./routes/projectRoutes');
+const chatRoutes = require('./routes/chatRoutes');
+const eventRoutes = require('./routes/eventRoutes');
 
 
 connectDB(); 
@@ -34,8 +38,18 @@ io.on('connection', (socket) => {
     console.log(`User joined project room: ${projectId}`);
   });
 
-  socket.on('send_message', (data) => {
-    io.to(data.projectId).emit('receive_message', data);
+  socket.on('send_message', async (data) => {
+    try {
+      const savedMessage = await Message.create({
+        project: data.projectId,
+        sender: data.senderId,
+        text: data.text
+      });
+      const populatedMsg = await savedMessage.populate('sender', 'name role');
+      io.to(data.projectId).emit('receive_message', populatedMsg);
+    } catch (err) {
+      console.error('Message save error:', err);
+    }
   });
 
   socket.on('disconnect', () => {
@@ -46,6 +60,8 @@ io.on('connection', (socket) => {
 
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/projects', require('./routes/projectRoutes'));
+app.use('/api/chat', chatRoutes);
+app.use('/api/events', eventRoutes);
 
 
 const PORT = process.env.PORT || 5000;
