@@ -8,6 +8,7 @@ const Message = require('./models/Message');
 const projectRoutes = require('./routes/projectRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const eventRoutes = require('./routes/eventRoutes');
+const postRoutes = require('./routes/postRoutes');
 
 
 connectDB(); 
@@ -62,7 +63,7 @@ app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/projects', require('./routes/projectRoutes'));
 app.use('/api/chat', chatRoutes);
 app.use('/api/events', eventRoutes);
-
+app.use('/api/posts', postRoutes);
 
 const PORT = process.env.PORT || 5000;
 

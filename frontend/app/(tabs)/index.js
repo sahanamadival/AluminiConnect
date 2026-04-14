@@ -1,141 +1,156 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, TextInput, Alert, Animated } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, FlatList, StyleSheet, Image, ActivityIndicator, TouchableOpacity, TouchableWithoutFeedback, Animated } from 'react-native';
 import apiClient from '../../src/api/client';
-import { getItemAsync, deleteItemAsync } from '../../src/utils/storage';
-import { router } from 'expo-router';
+import { getItemAsync } from '../../src/utils/storage';
 import { Ionicons } from '@expo/vector-icons';
 
-export default function HomeTab() {
-  const [role, setRole] = useState(null);
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+const InteractivePost = ({ item, currentUserId }) => {
+  const [liked, setLiked] = useState(item.likes.includes(currentUserId));
+  const [likeCount, setLikeCount] = useState(item.likes.length);
+  const heartScale = useRef(new Animated.Value(0)).current;
+  let lastTap = null;
 
-  // Alumni Specific State
-  const [projectTitle, setProjectTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [skills, setSkills] = useState('');
-
-  useEffect(() => {
-    checkRoleAndFetch();
-  }, []);
-
-  const checkRoleAndFetch = async () => {
-    const userRole = await getItemAsync('userRole');
-    setRole(userRole);
-    fetchUpdates(userRole);
-  };
-
-  const fetchUpdates = async (currentRole) => {
+  const toggleLike = async () => {
     try {
       const token = await getItemAsync('userToken');
-      if (currentRole === 'student') {
-        const res = await apiClient.get('/projects/recommendations', { headers: { Authorization: `Bearer ${token}` } });
-        setItems(res.data);
-      } else {
-        const res = await apiClient.get('/projects', { headers: { Authorization: `Bearer ${token}` } });
-        setItems(res.data);
-      }
+      // Optimistic UI Update
+      setLiked(!liked);
+      setLikeCount(liked ? likeCount - 1 : likeCount + 1);
+      
+      if (!liked) triggerHeartAnim();
+      
+      await apiClient.put(`/posts/${item._id}/like`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
     } catch (error) {
-      console.log(error);
+      console.log('Error liking', error);
+      // Revert if failed
+      setLiked(!liked);
+      setLikeCount(liked ? likeCount + 1 : likeCount - 1);
+    }
+  };
+
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    const DOUBLE_PRESS_DELAY = 300;
+    if (lastTap && (now - lastTap) < DOUBLE_PRESS_DELAY) {
+      if (!liked) toggleLike();
+      else triggerHeartAnim(); // pop again even if already liked
+    } else {
+      lastTap = now;
+    }
+  };
+
+  const triggerHeartAnim = () => {
+    Animated.sequence([
+      Animated.spring(heartScale, { toValue: 1, useNativeDriver: true, tension: 50, friction: 5 }),
+      Animated.timing(heartScale, { toValue: 0, duration: 1000, useNativeDriver: true })
+    ]).start();
+  };
+
+  return (
+    <View style={styles.postContainer}>
+      <View style={styles.postHeader}>
+        <View style={styles.avatar}><Text style={styles.avatarText}>{item.authorName.charAt(0)}</Text></View>
+        <Text style={styles.authorName}>{item.authorName}</Text>
+      </View>
+      
+      <TouchableWithoutFeedback onPress={handleDoubleTap}>
+        <View style={styles.imageContainer}>
+          <Image source={{ uri: item.imageUrl }} style={styles.postImage} />
+          <Animated.View style={[styles.giantHeart, { transform: [{ scale: heartScale }] }]}>
+            <Ionicons name="heart" size={100} color="rgba(255, 255, 255, 0.9)" />
+          </Animated.View>
+        </View>
+      </TouchableWithoutFeedback>
+
+      <View style={styles.actionRow}>
+        <TouchableOpacity onPress={toggleLike} style={styles.actionIcon}>
+          <Ionicons name={liked ? "heart" : "heart-outline"} size={28} color={liked ? "#ED4956" : "#262626"} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionIcon}>
+          <Ionicons name="chatbubble-outline" size={26} color="#262626" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionIcon}>
+          <Ionicons name="paper-plane-outline" size={26} color="#262626" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.bottomInfo}>
+        <Text style={styles.likesText}>{likeCount} {likeCount === 1 ? 'like' : 'likes'}</Text>
+        <View style={styles.captionRow}>
+          <Text style={styles.captionAuthor}>{item.authorName}</Text>
+          <Text style={styles.captionText}>{item.content}</Text>
+        </View>
+        <Text style={styles.dateText}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+      </View>
+    </View>
+  );
+};
+
+export default function FeedTab() {
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState(null);
+
+  useEffect(() => {
+    fetchPosts();
+  }, []);
+
+  const fetchPosts = async () => {
+    try {
+      const token = await getItemAsync('userToken');
+      const uId = await getItemAsync('userId');
+      setCurrentUserId(uId);
+      
+      const res = await apiClient.get('/posts', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setPosts(res.data);
+    } catch (error) {
+      console.log('Failed to fetch feed', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePostProject = async () => {
-    if (!projectTitle || !description) return Alert.alert("Error", "Please fill required fields");
-    try {
-      const token = await getItemAsync('userToken');
-      const skillsArray = skills.split(',').map(s => s.trim()).filter(s => s);
-      const res = await apiClient.post('/projects', { title: projectTitle, description, requiredSkills: skillsArray }, { headers: { Authorization: `Bearer ${token}` } });
-      setItems([res.data, ...items]);
-      setProjectTitle(''); setDescription(''); setSkills('');
-      Alert.alert("Success", "Project posted!");
-    } catch (error) {
-      Alert.alert("Error", "Failed to post");
-    }
-  };
-
-  const logout = async () => {
-    await deleteItemAsync('userToken');
-    await deleteItemAsync('userRole');
-    await deleteItemAsync('userId');
-    router.replace('/');
-  };
-
-  const renderStudentItem = ({ item }) => (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>{item.project.title}</Text>
-      <Text style={styles.cardDesc}>{item.project.description}</Text>
-      <View style={styles.aiBadge}>
-        <Ionicons name="sparkles" size={16} color="#FF6F00" />
-        <Text style={styles.aiText}>AI Match Insight: {item.aiReasoning}</Text>
-      </View>
-      <TouchableOpacity 
-        style={styles.chatBtn} 
-        onPress={() => router.push(`/chat/${item.project._id}`)}>
-        <Text style={{color:'#fff', fontWeight:'bold'}}>Chat with Alumni</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderAlumniItem = ({ item }) => (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>{item.title}</Text>
-      <Text style={styles.cardDesc}>{item.description}</Text>
-      <View style={{flexDirection:'row', flexWrap:'wrap', marginTop: 10}}>
-        {item.requiredSkills?.map(s => (
-          <Text key={s} style={styles.skillTag}>{s}</Text>
-        ))}
-      </View>
-    </View>
-  );
-
-  if (loading) return <ActivityIndicator style={{marginTop:50}} size="large" />;
+  const renderEmpty = () => {
+    if (loading) return <ActivityIndicator style={{marginTop:50}} size="large" />;
+    return <Text style={styles.emptyText}>No posts yet. Be the first to share an update!</Text>;
+  }
 
   return (
     <View style={styles.container}>
-      {role === 'alumni' && (
-        <View style={styles.formCard}>
-          <Text style={styles.formHeader}>Post a New Project</Text>
-          <TextInput style={styles.input} placeholder="Project Title" value={projectTitle} onChangeText={setProjectTitle} />
-          <TextInput style={styles.input} placeholder="Description" value={description} onChangeText={setDescription} multiline />
-          <TextInput style={styles.input} placeholder="Required Skills (comma separated)" value={skills} onChangeText={setSkills} />
-          <TouchableOpacity style={styles.postBtn} onPress={handlePostProject}>
-            <Text style={{color:'#fff', fontWeight:'bold', textAlign:'center'}}>Post Project</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      <Text style={styles.headerTitle}>{role === 'student' ? 'Recommended Projects' : 'Your Opportunities'}</Text>
-      
       <FlatList
-        data={items}
-        keyExtractor={(item) => (item.project ? item.project._id : item._id)}
-        renderItem={role === 'student' ? renderStudentItem : renderAlumniItem}
-        contentContainerStyle={{paddingBottom: 20}}
+        data={posts}
+        keyExtractor={item => item._id}
+        renderItem={({ item }) => <InteractivePost item={item} currentUserId={currentUserId} />}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={renderEmpty}
+        refreshing={loading}
+        onRefresh={fetchPosts}
       />
-      
-      <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
-         <Text style={{color:'#fff', fontWeight:'bold', textAlign:'center'}}>Logout Securely</Text>
-      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6F8', padding: 15 },
-  headerTitle: { fontSize: 22, fontWeight: '700', color: '#1A237E', marginVertical: 15 },
-  card: { backgroundColor: '#fff', padding: 20, borderRadius: 12, marginBottom: 15, elevation: 2, shadowColor: '#000', shadowOffset:{width:0, height:2}, shadowOpacity:0.05 },
-  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#1A237E' },
-  cardDesc: { fontSize: 14, color: '#555', marginTop: 5 },
-  aiBadge: { flexDirection: 'row', backgroundColor: '#FFF3E0', padding: 10, borderRadius: 8, marginTop: 10 },
-  aiText: { color: '#E65100', fontSize: 13, marginLeft: 5, flexShrink: 1 },
-  chatBtn: { backgroundColor: '#FF6F00', padding: 12, borderRadius: 8, marginTop: 15, alignItems: 'center' },
-  formCard: { backgroundColor: '#fff', padding: 20, borderRadius: 12, marginBottom: 10, elevation: 3 },
-  formHeader: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 15 },
-  input: { backgroundColor: '#F9F9F9', padding: 12, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: '#EEE' },
-  postBtn: { backgroundColor: '#1A237E', padding: 15, borderRadius: 8, marginTop: 5 },
-  logoutBtn: { backgroundColor: '#D32F2F', padding: 15, borderRadius: 8, marginTop: 10 },
-  skillTag: { backgroundColor: '#E8EAF6', color: '#1A237E', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, marginRight: 8, marginBottom: 8, fontSize: 12 }
+  container: { flex: 1, backgroundColor: '#fff' },
+  emptyText: { textAlign: 'center', marginTop: 50, color: '#888' },
+  postContainer: { marginBottom: 15 },
+  postHeader: { flexDirection: 'row', alignItems: 'center', padding: 10 },
+  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#1A237E', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+  authorName: { fontWeight: 'bold', fontSize: 14, color: '#262626' },
+  imageContainer: { width: '100%', height: 400, backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center' },
+  postImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  giantHeart: { position: 'absolute' },
+  actionRow: { flexDirection: 'row', padding: 10 },
+  actionIcon: { marginRight: 15 },
+  bottomInfo: { paddingHorizontal: 10 },
+  likesText: { fontWeight: 'bold', color: '#262626', marginBottom: 5 },
+  captionRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  captionAuthor: { fontWeight: 'bold', color: '#262626', marginRight: 5 },
+  captionText: { color: '#262626' },
+  dateText: { color: '#8E8E8E', fontSize: 11, marginTop: 5, textTransform: 'uppercase' }
 });
